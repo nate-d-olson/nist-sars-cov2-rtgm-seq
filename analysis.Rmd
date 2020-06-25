@@ -168,9 +168,9 @@ depth_df %>%
 - ONT unmapped reads - likely an due to low quality reads and not a reflection of differences between the expected sequence and the RGTM RNA sequence.
 
 ## Illumina specific
-- Uneven coverage by Illumina  
-- GC bimodal distribution for construct 1  
-- High duplication rate - fastq only looks at the first 50 bps  
+- Uneven coverage by Illumina - Likely an artifact of the 
+- GC bimodal distribution for construct 1  - similar distribution in construct reference sequence, likely true biological GC content distribution.
+- High duplication rate - fastq only looks at the first 50 bps, likely artifact of high coverage and limited sequence context. 
     
 # System Information
 ```{r}
