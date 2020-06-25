@@ -1,0 +1,232 @@
+###############################################################################
+##
+## Pipeline for characterizing SARs-CoV-2 RGTM Contruct sequences
+##
+## Author: Nathan D. Olson
+## Email: nolson@nist.gov
+##
+###############################################################################
+
+## Construct reference sequences were indexed outside of the snakemake pipeline 
+## using samtools and bwa
+
+## Snakemake header 
+configfile: "workflow/config.yaml"
+
+rule all:
+    input: 
+        "results/qc/multiqc.html", 
+        expand("results/vcf/ill_{construct}.vcf", construct = ["c1","c2"]), 
+        "results/qc/ont_pycoqc.html",
+        expand("results/{dataset}_depth.txt", dataset = ["ill", "ont"]),
+        "results/bam/ill.bam.bai",
+        "results/ref/qc.tsv",
+        "results/bam/ill_downsampled.bam",
+        "results/bam/ill_downsampled.bam.bai"
+
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+## Ref Preprocessing
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+rule calc_gc:
+    input: config["ref"]
+    output: "results/ref/qc.tsv"
+    conda: "env/seqkit.yaml"
+    shell: """
+        seqkit sliding -s 1 -W 50 {input} \
+        | seqkit fx2tab -n -g \
+        > {output}
+    """
+
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+## ONT Preprocessing
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+## Basecalling 
+rule run_guppy_basecaller:
+    input: 
+        f5 = config["f5_dir"]
+    output: 
+        fq = "results/fq/ont.fastq.gz"
+    params: 
+        guppy = config["guppy_basecaller"], 
+        threads = config["guppy_threads"],
+        outdir = "results/fq/guppy_output"
+    shell: """
+        ## Documenting guppy version number
+        {params.guppy} -v
+
+        ## Creating output directory
+        mkdir -p {params.outdir}
+
+        ## Running guppy
+        {params.guppy} \
+            --input_path {input.f5} \
+            --save_path {params.outdir} \
+            --config rna_r9.4.1_70bps_hac.cfg \
+            --cpu_threads_per_caller {params.threads} \
+            --recursive
+        
+        ## Combine and compress
+        cat {params.outdir}/*fastq |
+            gzip > {output}
+    """
+
+## Alignment 
+rule align_ont:
+    input: 
+        fq = "results/fq/ont.fastq.gz",
+        ref = config["ref"]
+    output: 
+        bam = "results/bam/ont.bam",
+        bamidx = "results/bam/ont.bam.bai"
+    conda: "envs/map_reads.yaml"
+    params: threads = config["minimap2_threads"]
+    shell: """
+        ## Mapping, sorting, and indexing
+        minimap2 -t {params.threads} -aL -x map-ont \
+            {input.ref} {input.fq} \
+            | samtools sort -@{params.threads} \
+                -O bam --reference {input.ref} \
+            > {output.bam}
+
+        samtools index {output.bam}
+    """
+
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+## ILL Preprocessing
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+## Copying fastqs to make fastq path consistent with ONT for QC
+rule link_fq:
+    input: expand(config["ill_fq_dir"] + "/{construct}_{read}_001.fastq.gz", \
+                    construct = ["c1", "c2"] , read = ["R1", "R2"])
+    output: expand("results/fq/ill/{construct}_{read}_001.fastq.gz", \
+                    construct = ["c1", "c2"] , read = ["R1", "R2"])
+    params: 
+        indir = config["ill_fq_dir"], 
+        outdir = "results/fq/ill/"
+    shell: "cp {params.indir}/*fastq.gz {params.outdir}"
+
+## Get appropriate reference for the library
+def get_ref(wildcards):
+    if wildcards.construct == "c1" :
+        return config["ref_c1"]
+    return config["ref_c2"]
+
+rule align_ill:
+    input:
+        reads=["results/fq/ill/{construct}_R1_001.fastq.gz", \
+               "results/fq/ill/{construct}_R2_001.fastq.gz"],
+        ref = get_ref
+    output: "results/bam/ill_{construct}.bam"
+    log: "logs/bwa_mem/ill_{construct}.log"
+    params:
+        index=get_ref,
+        extra=r"-R '@RG\tID:{construct}\tSM:SARS-COV2-RGTM'",
+        sort="samtools", 
+        sort_order="coordinate"
+    threads: config["bwa_threads"]
+    wrapper: "0.60.1/bio/bwa/mem"
+
+rule index_bams:
+    input: "results/bam/ill_{construct}.bam"
+    output: "results/bam/ill_{construct}.bam.bai"
+    wrapper: "0.60.1/bio/samtools/index"
+
+## Combining construct bams for visualization and anlysis
+rule combine_bams:
+    input: expand("results/bam/ill_{construct}.bam", construct = ["c1","c2"])
+    output: "results/bam/ill.bam"
+    threads:  3
+    wrapper: "0.60.1/bio/samtools/merge"
+
+rule index_combined_bams:
+    input: "results/bam/ill.bam"
+    output: "results/bam/ill.bam.bai"
+    wrapper: "0.60.1/bio/samtools/index"
+
+## Subsampling bam for inclusion in github repo
+## - downsampling 0.05% of read pairs with 10169 seed number
+rule downsample_bam:
+    input: "results/bam/ill.bam"
+    output: "results/bam/ill_downsampled.bam"
+    params: "-bh -s0.05" 
+    wrapper: "0.60.1/bio/samtools/view"
+
+rule index_downsample:
+    input: "results/bam/ill_downsampled.bam"
+    output: "results/bam/ill_downsampled.bam.bai"
+    wrapper: "0.60.1/bio/samtools/index"
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+## QC
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+## Illumina
+rule fastqc:
+    input: "results/fq/ill/{construct}_{read}_001.fastq.gz"
+    output:
+        html="results/qc/fq/ill_{construct}_{read}_fastqc.html",
+        zip="results/qc/fq/ill_{construct}_{read}_fastqc.zip"
+    wrapper: "0.60.1/bio/fastqc"
+
+rule samtools_stats_ill:
+    input: "results/bam/ill_{construct}.bam"
+    output: "results/qc/bam/ill_{construct}.txt"
+    log: "logs/samtools_stats/ill_{construct}.log"
+    wrapper: "0.60.1/bio/samtools/stats"
+
+## Combining into single qc report
+rule multiqc:
+    input:
+        expand("results/qc/fq/ill_{construct}_{read}_fastqc.zip", \
+            construct = ["c1", "c2"] , read = ["R1", "R2"]),
+        "results/qc/bam/ont.txt", 
+        "results/qc/bam/ill_c1.txt", "results/qc/bam/ill_c2.txt"
+    output: "results/qc/multiqc.html"
+    log: "logs/multiqc.log"
+    wrapper: "0.60.1/bio/multiqc"
+
+## ONT 
+rule ontqc:
+    input: 
+        seq_summary = "results/fq/guppy_output/sequencing_summary.txt",
+        bam = "results/bam/ont.bam"
+    output: "results/qc/ont_pycoqc.html",
+    threads: 6
+    conda: "envs/nanoqc.yaml"
+    shell: """
+        pycoQC \
+            -f {input.seq_summary} \
+            -a {input.bam} \
+            -o {output} 
+    """
+rule samtools_stats_ont:
+    input: "results/bam/ont.bam"
+    output: "results/qc/bam/ont.txt"
+    log: "logs/samtools_stats/ont.log"
+    wrapper: "0.60.1/bio/samtools/stats"
+
+
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+## Analysis
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+## Coverage analysis
+rule calc_coverage:
+    input:
+        bams=["results/bam/{dataset}.bam"]
+    output: "results/{dataset}_depth.txt"
+    params: extra = "-d 0"
+    wrapper: "0.60.1/bio/samtools/depth"
+
+## Variant Calling
+rule lofreq:
+    input:
+        bam="results/bam/ill_{construct}.bam",
+        bai="results/bam/ill_{construct}.bam.bai"
+    output:  "results/vcf/ill_{construct}.vcf"
+    log: "logs/lofreq_call/ill_{construct}.log"
+    params: ref=config["ref"]
+    threads: 8
+    wrapper: "0.60.1/bio/lofreq/call"

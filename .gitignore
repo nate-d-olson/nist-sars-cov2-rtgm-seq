@@ -1,0 +1,9 @@
+## Ignoring ONT guppy directory
+workflow/src/ont-guppy-cpu
+.snakemake
+.git
+logs
+results
+data-raw
+.DS_Store
+.Rproj.user

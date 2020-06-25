@@ -1,0 +1,29 @@
+track name="PCR Targets"
+Construct1wflank	0	6	NruI restriction site	0	+
+Construct1wflank	7	23	M13 Fwd	0	+
+Construct1wflank	23	43	T7 promotor	0	+
+Construct1wflank	50	128	BK-E 5' detection	0	+
+Construct1wflank	451	564	WHO Target 2	0	+
+Construct1wflank	2469	2541	CDC N1	0	+
+Construct1wflank	2502	2559	Thailand	0	+
+Construct1wflank	2863	2935	CDC N3	0	+
+Construct1wflank	3063	3162	China target 2	0	+
+Construct1wflank	3307	3465	Japan	0	+
+Construct1wflank	3327	3437	Hong Kong Target 2	0	+
+Construct1wflank	3346	3413	CDC N2	0	+
+Construct1wflank	3883	3986	BK-D 3' detection	0	+
+Construct1wflank	4025	4031	KasI	0	-
+Construct1wflank	4008	4025	M13 Reverse	0	-
+Construct1wflank	3989	4008	T3 promotor	0	-
+Construct2wflank	0	6	NruI site	0	+
+Construct2wflank	7	24	M13 Fwd	0	+
+Construct2wflank	24	43	T7 promotor	0	+
+Construct2wflank	50	128	BK-E 5' detection site	0	+
+Construct2wflank	413	521	Pasteur target 1	0	+
+Construct2wflank	1065	1184	China terget 1	0	+
+Construct2wflank	1803	1910	Pasteur target 2	0	+
+Construct2wflank	3154	3254	WHO target 1	0	+
+Construct2wflank	3831	3837	KasI site	0	-
+Construct2wflank	3814	3831	M13 reverse	0	-
+Construct2wflank	3795	3814	T3 promotor	0	-
+Construct2wflank	3689	3792	BK-D 3' detection	0	-

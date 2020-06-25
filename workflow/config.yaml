@@ -1,0 +1,9 @@
+guppy_basecaller: "workflow/src/ont-guppy-cpu/bin/guppy_basecaller"
+guppy_threads: 7
+ref: "resources/constructs_w_flankings.fa"
+ref_c1: "resources/construct1_w_flankings.fa"
+ref_c2: "resources/construct2_w_flankings.fa"
+f5_dir: "data-raw/ont"
+ill_fq_dir: "data-raw/ill"
+minimap2_threads: 7
+bwa_threads: 7

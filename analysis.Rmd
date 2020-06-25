@@ -1,0 +1,187 @@
+---
+title: "SARs-CoV-2 RGTM Sequence Analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggpubr)
+library(tidyverse)
+library(here)
+```
+
+# Background
+- 4 kb constructs
+- DNA plasmids
+- In-vitro transcription used to generate RNA
+- Pooled RNA aliquted for RGTM
+- Pooled RNA used as sequencing input
+
+# Dataset
+- Illumina:  
+  - sequenced cDNA generated through reverse transcription  
+  - barcoded libraries for each construct  
+  - barcoded 2X150 bp, 6M read pairs per construct  
+- ONT:  
+  - RNA sequencing combined library  
+  - 310K reads with median read length of 1350 bp
+
+# QC 
+- Illumina qc results generated using `samtools stats` and `fastqc`. Multiqc used to compile qc results into single document. Results below were extracted from `results/qc/multiqc.html`.
+- ONT - See `results/qc/ont_pycoqc.html`
+
+## Illumina
+```{r fig.cap= "Illumina read QC distribution for the two constructs. Construct 1 (red) has an unexpectd bimodal distribution.", echo=FALSE}
+## Figure downloaded/ exported from MultiQC report
+knitr::include_graphics(here("results", "figs", "fastqc_per_sequence_gc_content_plot.png"))
+```
+
+
+##  ONT 
+### Basecalling
+```{r fig.cap= "ONT read identity distribution. Median 0.90, representing ~0.90\\% basecalling accuracy.", echo=FALSE}
+## Figure downloaded/ exported from pycoQC report
+knitr::include_graphics(here("results", "figs", "ont_base-identity.png"))
+```
+
+### Read Length
+```{r fig.cap= "ONT aligned read length distribution. Median read length is less than 2kb but mode is around the full construct length, ~4kb.", echo=FALSE}
+## Figure downloaded/ exported from pycoQC report
+knitr::include_graphics(here("results", "figs", "ont_read-lengths.png"))
+```
+
+
+```{r fig.cap= "ONT aligned read length compared to basecalled read length. Aligned read length and basecalled read lengths are well correlated indicating that shorter aligned read lengths are not due to large differences between the expected construct and actual sequence.", echo=FALSE}
+## Figure downloaded/ exported from pycoQC report
+knitr::include_graphics(here("results", "figs", "ont_length-scatter.png"))
+```
+
+### Mapping Efficiency
+```{r fig.cap = "Base alignment alluvial diagram. Overall descent base accuracy for aligned bases but 1/3 of the bases in unmapped reads. This is something that may warrant further investigation.", echo=FALSE}
+## Figure downloaded/ exported from pycoQC report
+knitr::include_graphics(here("results", "figs", "ont_alluvial.png"))
+```
+
+# Results
+## Constructs
+```{r}
+gc_df <- read_tsv(here("results","ref","qc.tsv"), 
+                  col_names = c("seq_name", "GC")) %>% 
+  mutate(Construct = str_remove(seq_name, "_.*"),
+         POS = str_extract(seq_name, "(?<=_sliding:).*(?=-)"),
+         POS = as.integer(POS)) %>% 
+  select(Construct, POS, GC)
+```
+```{r fig.cap = "Construct GC content by base. GC calculated using a 150 bp sliding window in 1 bp increments."}
+gc_df %>% ggplot() + 
+  geom_path(aes(x = POS, y = GC)) + 
+  facet_wrap(~Construct, ncol = 1) + 
+  theme_bw() 
+```
+
+```{r fig.cap = "GC content distribution by construct. Illumina read GC content bimodal distribution likely a reflection of the refence GC content distribution and not an indicator of any bias."}
+gc_df %>% ggplot() + 
+  geom_density(aes(x = GC)) + 
+  facet_wrap(~Construct, ncol = 1) + 
+  theme_bw() 
+```
+
+
+## Coverage
+```{r message = FALSE}
+depth_df <- list(ILL = "ill_depth.txt",
+                 ONT    = "ont_depth.txt") %>% 
+  map_dfr(~read_tsv(here("results", .), 
+                    col_names = c("Construct","POS","Coverage")),
+          .id = "Dataset")
+```
+
+
+```{r fig.cap = "ONT and Illumina coverage by position. Inconsistent coverage for the Illumina data. Potentially due to systematic biases in cDNA generation."}
+depth_df %>% 
+  ggplot() + 
+  geom_path(aes(x = POS, y = Coverage), size = 0.25) + 
+  facet_grid(Dataset~Construct, scales = "free_y") + 
+  theme_bw() + 
+  theme(legend.position = "bottom")
+  
+```
+
+
+## Variant Analysis
+```{r}
+cnames <- c("Construct","POS","ID","REF",	"ALT",	"QUAL",	"FILTER",	"INFO")
+vcf_df <- list(c1 = "ill_c1.vcf", c2 = "ill_c2.vcf") %>% 
+  map(~here("results","vcf", .)) %>% 
+  map_dfr(read_tsv, col_names = cnames, comment = "#") %>% 
+  mutate(INFO = str_remove_all(INFO, paste0(c("DP","AF","SB","DP4"), "=", collapse ="|"))) %>%
+  separate(INFO, c("DP","AF","SB","DP4"), sep = ";") %>%
+  mutate(DP = as.integer(DP), AF = as.numeric(AF), SB = as.numeric(SB))
+```
+
+Candidate variants per construct.
+```{r}
+vcf_df %>% 
+  group_by(Construct) %>% 
+  summarise(n_var = n())
+```
+
+
+Allele Fraction Distribution
+```{r}
+vcf_df %>% 
+  ggplot() + 
+  geom_histogram(aes(x = AF))  + 
+  geom_vline(aes(xintercept = 0.05), color = "darkorange") +
+  geom_vline(aes(xintercept = 0.1), color = "darkorange") +
+  geom_vline(aes(xintercept = 0.5), color = "darkorange") +
+  scale_x_log10() + 
+  facet_wrap(~Construct, ncol = 1) + 
+  theme_bw() +
+  labs(x = "Allele Frequency")
+```
+
+ 
+## Combined Results 
+```{r fig.cap = "Comparison of coverage, putative variants, and GC content. Overlay of variants on coverage plot to see if variants are in regions with low coverage but not necessarily. High AF variants (~0.5 AF) are at the end of the construct sequence. "}
+depth_df %>% 
+  group_by(Construct, Dataset) %>% 
+  mutate(Coverage = 100 * Coverage/max(Coverage)) %>% 
+  left_join(gc_df) %>% 
+  ggplot() + 
+  geom_area(aes(x = POS, y = Coverage), fill = "grey50", alpha = 0.5) +
+  geom_path(aes(x = POS, y = GC), color = "darkorange") +
+    geom_vline(data = filter(vcf_df, AF > 0.01),
+           aes(xintercept = POS, color = AF)) +
+  facet_grid(Dataset~Construct, scales = "free_y") + 
+  theme_bw() + 
+  theme(legend.position = "bottom") + 
+  labs(y = "Relative Coverage (% of Max)")
+
+```
+
+# Potential Issues
+## ONT specific
+- ONT read length distribution: 
+  - represent length of molecules sequenced, primarily shorter seqs  
+  - GenWiz QC results showed mostly 4kb length fragments, potentially not relevant  
+- ONT unmapped reads - likely an due to low quality reads and not a reflection of differences between the expected sequence and the RGTM RNA sequence.
+
+## Illumina specific
+- Uneven coverage by Illumina  
+- GC bimodal distribution for construct 1  
+- High duplication rate - fastq only looks at the first 50 bps  
+    
+# System Information
+```{r}
+s_info <- devtools::session_info()
+print(s_info$platform)
+```
+
+### Loaded Packages
+```{r}
+as.data.frame(s_info$packages) %>% 
+  filter(attached) %>% 
+  select(package, loadedversion, date, source) %>% 
+  knitr::kable()
+```
